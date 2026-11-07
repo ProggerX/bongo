@@ -18,8 +18,10 @@ For Arch Linux:
 sudo pacman -S gtk4 gtk4-layer-shell
 ```
 
-macOS support is not available at this stage. It is planned for a future
-version.
+For macOS (GTK 4.8 or newer):
+```bash
+brew install gtk4 pkg-config
+```
 
 ### Building from source
 Clone the repository and run:
@@ -31,6 +33,48 @@ cargo build --release
 On Linux, the binary can be installed with `sudo cp ./target/release/bongo /usr/bin`.
 
 > **Linux note:** Since the app reads directly from `/dev/input/`, you might need to run it with `sudo` or add your user to the `input` group: `sudo usermod -aG input $USER` (relogin required).
+
+### macOS setup (the macos is ai slopped. You can burn your computer or install asahi)
+
+1. Install GTK 4.8 or newer and `pkg-config` using the command above. Make sure
+   Rust and Cargo are installed, then build and launch from the repository:
+
+   ```bash
+   cargo build --release
+   ./target/release/bongo
+   ```
+
+2. Allow keyboard monitoring when prompted. If you see
+   `macOS denied keyboard access`, open **System Settings → Privacy & Security →
+   Input Monitoring** .
+
+3. Enable the application you use to launch Bongo, such as **Terminal** or
+   **iTerm**. If it is missing, click **+** and add it from Applications.
+   When launching through an IDE's integrated terminal, enable that IDE instead.
+   If macOS lists **bongo** itself, enable that entry too.
+
+4. Quit the terminal or launcher completely with **⌘Q**, reopen it, and run
+   `./target/release/bongo` again. Closing just the terminal tab is not enough.
+   The permission error should disappear, and the cat should react to typing
+   even when another application is focused.
+
+To choose the corner, create `~/.config/bongo.toml`:
+
+```bash
+mkdir -p ~/.config
+```
+
+```toml
+[window]
+# top-left, top-right, bottom-left or bottom-right
+position = "top-right"
+```
+
+Restart Bongo after changing the configuration. The widget stays above ordinary
+windows on all desktops, with a 16-pixel margin from the usable screen edges
+(excluding the menu bar and Dock). Bundled cat images are used by default;
+see below to supply your own. On macOS, keyboard events are observed globally,
+so the `[input]` section is unnecessary and `device` is ignored.
 
 ## Configuration
 Create a configuration file at `~/.config/bongo.toml`:
