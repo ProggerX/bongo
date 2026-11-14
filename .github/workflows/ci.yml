@@ -59,7 +59,7 @@ jobs:
             --env TARGET \
             --env CARGO_TERM_COLOR \
             --env RUSTFLAGS='-C target-feature=-crt-static' \
-            rust:alpine sh -eu -c '
+            rust:alpine3.22 sh -eu -c '
               apk add --no-cache build-base pkgconf gtk4.0-dev gtk4-layer-shell-dev
               cargo build --locked --release --target "$TARGET"
             '

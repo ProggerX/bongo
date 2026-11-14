@@ -20,13 +20,16 @@ Download and extract the archive for your platform from
 - `bongo-macos-arm64.tar.gz` (Apple Silicon)
 
 Cat images are embedded in the binary. Custom images can still be configured.
-The Linux musl build uses shared GTK4 and GTK4 Layer Shell libraries; On macOS, install GTK4. Input permissions are described below.
+The Linux binary is built for `x86_64-unknown-linux-musl`. It requires the musl
+loader and GTK4 / GTK4 Layer Shell libraries built for musl; these are not
+included in the archive. On macOS, install GTK4. Input permissions are described
+below.
 
 `SHA256SUMS` contains checksums for the binary archives. GitHub also provides
 source code archives in ZIP and tar.gz formats.
 
 ### Prerequisites
-(Before building or after install), install GTK4. Linux also requires GTK4 Layer Shell.
+Before building from source, install GTK4. Linux also requires GTK4 Layer Shell.
 
 For Arch Linux:
 ```bash
