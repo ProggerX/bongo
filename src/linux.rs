@@ -1,29 +1,11 @@
 use crate::{STATE_LEFT, STATE_REST, STATE_RIGHT};
-use gtk4::ApplicationWindow;
-use gtk4::prelude::*;
-use gtk4_layer_shell::{Edge, Layer, LayerShell};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 
-pub fn configure_window(window: &ApplicationWindow, position: &str) {
-    window.init_layer_shell();
-    window.set_layer(Layer::Top);
-    let (top, right, bottom, left) = match position {
-        "top-right" => (true, true, false, false),
-        "bottom-left" => (false, false, true, true),
-        "bottom-right" => (false, true, true, false),
-        _ => (true, false, false, true),
-    };
-    window.set_anchor(Edge::Top, top);
-    window.set_anchor(Edge::Right, right);
-    window.set_anchor(Edge::Bottom, bottom);
-    window.set_anchor(Edge::Left, left);
-    window.set_margin(Edge::Top, if top { 16 } else { 0 });
-    window.set_margin(Edge::Right, if right { 16 } else { 0 });
-    window.set_margin(Edge::Bottom, if bottom { 16 } else { 0 });
-    window.set_margin(Edge::Left, if left { 16 } else { 0 });
-    window.set_exclusive_zone(0);
-}
+mod render;
+mod ui;
+
+pub(crate) use ui::run;
 
 pub fn start_input(state: Arc<AtomicU8>, target_device_name: String) {
     std::thread::spawn(move || {

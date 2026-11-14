@@ -9,6 +9,11 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU8;
 
 mod input;
+mod ui;
+
+pub(crate) fn run(config: crate::Config) -> glib::ExitCode {
+    ui::run(config)
+}
 
 #[link(name = "ApplicationServices", kind = "framework")]
 unsafe extern "C" {

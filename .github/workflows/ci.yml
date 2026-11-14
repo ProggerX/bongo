@@ -52,17 +52,33 @@ jobs:
           persist-credentials: false
       - name: Build Linux musl
         if: runner.os == 'Linux'
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS: -C target-feature=+crt-static
         run: |
-          docker run --rm \
-            --volume "$GITHUB_WORKSPACE:/workspace" \
-            --workdir /workspace \
-            --env TARGET \
-            --env CARGO_TERM_COLOR \
-            --env RUSTFLAGS='-C target-feature=-crt-static' \
-            rust:alpine3.22 sh -eu -c '
-              apk add --no-cache build-base pkgconf gtk4.0-dev gtk4-layer-shell-dev
-              cargo build --locked --release --target "$TARGET"
-            '
+          rustup toolchain install stable --profile minimal --target "$TARGET"
+          cargo +stable test --locked --target "$TARGET"
+          cargo +stable build --locked --release --target "$TARGET"
+      - name: Verify static Linux binary
+        if: runner.os == 'Linux'
+        run: |
+          binary="target/$TARGET/release/bongo"
+          file "$binary"
+          if readelf --program-headers "$binary" | grep 'INTERP'; then
+            echo 'Unexpected ELF interpreter in musl release' >&2
+            exit 1
+          fi
+          if readelf --dynamic "$binary" | grep '(NEEDED)'; then
+            echo 'Unexpected shared library dependency in musl release' >&2
+            exit 1
+          fi
+          set +e
+          env -u WAYLAND_DISPLAY -u WAYLAND_SOCKET XDG_RUNTIME_DIR=/nonexistent \
+            "$binary" > startup.log 2>&1
+          exit_status=$?
+          set -e
+          cat startup.log
+          test "$exit_status" -eq 1
+          grep -q 'cannot connect to Wayland' startup.log
       - name: Install macOS dependencies
         if: runner.os == 'macOS'
         run: |
@@ -71,7 +87,9 @@ jobs:
           rustup toolchain install stable --profile minimal --target "$TARGET"
       - name: Build macOS
         if: runner.os == 'macOS'
-        run: cargo +stable build --locked --release --target "$TARGET"
+        run: |
+          cargo +stable test --locked --target "$TARGET"
+          cargo +stable build --locked --release --target "$TARGET"
       - name: Package binary
         run: |
           mkdir -p "dist/bongo-$PLATFORM"

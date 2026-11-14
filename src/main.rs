@@ -1,20 +1,10 @@
-use gtk4::gdk;
-use gtk4::prelude::*;
-use gtk4::{Application, ApplicationWindow, Box, Image, Orientation};
 use serde::Deserialize;
-use std::io::Read;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::process::ExitCode;
 
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
-
-#[cfg(target_os = "linux")]
-use linux as platform;
-#[cfg(target_os = "macos")]
-use macos as platform;
 
 pub(crate) const STATE_REST: u8 = 0;
 pub(crate) const STATE_LEFT: u8 = 1;
@@ -32,7 +22,7 @@ struct Input {
     pub device: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize, Clone)]
 struct Config {
     pub imgs: Option<Imgs>,
     pub input: Option<Input>,
@@ -42,168 +32,53 @@ struct Config {
 #[derive(Debug, Deserialize, Clone)]
 struct Window {
     pub position: Option<String>,
+    pub size: Option<u32>,
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Config {
-            imgs: None,
-            input: None,
-            window: None,
-        }
+impl Config {
+    fn image_size(&self, width: u32, height: u32) -> (u32, u32) {
+        let size = self
+            .window
+            .as_ref()
+            .and_then(|window| window.size)
+            .unwrap_or(64)
+            .clamp(1, 2048);
+        let longest = u64::from(width.max(height).max(1));
+        let scaled = |dimension| {
+            ((u64::from(dimension) * u64::from(size) + longest / 2) / longest).max(1) as u32
+        };
+        (scaled(width), scaled(height))
     }
 }
 
 fn expand_path(path_option: Option<String>) -> Option<String> {
     let path = path_option?;
-    if path.starts_with('~') {
-        if let Ok(home) = std::env::var("HOME") {
-            return Some(path.replacen('~', &home, 1));
-        }
+    if path.starts_with('~')
+        && let Ok(home) = std::env::var("HOME")
+    {
+        return Some(path.replacen('~', &home, 1));
     }
     Some(path)
 }
 
-fn image_texture(configured_path: Option<String>, bundled: &'static [u8]) -> gdk::Texture {
-    if let Some(path) = expand_path(configured_path) {
-        match gtk4::gdk_pixbuf::Pixbuf::from_file(&path) {
-            Ok(pixbuf) => return gdk::Texture::for_pixbuf(&pixbuf),
-            Err(error) => eprintln!("[WARN] Cannot load image {path}: {error}"),
-        }
+fn load_config() -> Config {
+    let path = expand_path(Some("~/.config/bongo.toml".to_owned())).unwrap();
+    match std::fs::read_to_string(path) {
+        Ok(data) => toml::from_str(&data).unwrap_or_default(),
+        Err(_) => Config::default(),
     }
-
-    let pixbuf = gtk4::gdk_pixbuf::Pixbuf::from_read(std::io::Cursor::new(bundled))
-        .expect("Bundled cat image must be valid");
-    gdk::Texture::for_pixbuf(&pixbuf)
 }
 
-pub fn main() -> glib::ExitCode {
-    let file_path_op = expand_path(Some(String::from("~/.config/bongo.toml")));
-
-    let file_path = match file_path_op {
-        None => {
-            println!("Something went wrong with path expansion");
-            return glib::ExitCode::new(1);
+fn main() -> ExitCode {
+    let config = load_config();
+    #[cfg(target_os = "linux")]
+    match linux::run(config) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("Failed to start Bongo: {error}");
+            ExitCode::FAILURE
         }
-        Some(a) => a,
-    };
-
-    let mut data = vec![];
-    if let Ok(mut file) = std::fs::File::open(file_path) {
-        let _ = file.read_to_end(&mut data);
     }
-
-    let conf: Config = if !data.is_empty() {
-        toml::from_str(&String::from_utf8(data).expect("Our bytes should be valid utf8"))
-            .unwrap_or_default()
-    } else {
-        Config::default()
-    };
-
-    if let Err(error) = gtk4::init() {
-        eprintln!("Failed to initialize GTK: {error}");
-        return glib::ExitCode::new(1);
-    }
-
-    let app = Application::new(
-        Some("com.bongocat.widget"),
-        gtk4::gio::ApplicationFlags::empty(),
-    );
-
-    app.connect_activate(move |app| {
-        build_ui(app, conf.clone());
-    });
-
-    app.run()
-}
-
-fn build_ui(app: &Application, conf: Config) {
-    let window = ApplicationWindow::builder()
-        .application(app)
-        .title("Bongo Cat Widget")
-        .build();
-
-    let position = conf
-        .window
-        .as_ref()
-        .and_then(|window| window.position.clone())
-        .unwrap_or_else(|| "top-left".to_string());
-
-    platform::configure_window(&window, &position);
-
-    let container = Box::builder()
-        .orientation(Orientation::Horizontal)
-        .css_name("bongo-container")
-        .build();
-
-    let img_rest = image_texture(
-        conf.imgs.as_ref().and_then(|i| i.rest.clone()),
-        include_bytes!("../imgs/cat-rest.png"),
-    );
-    let img_left = image_texture(
-        conf.imgs.as_ref().and_then(|i| i.left.clone()),
-        include_bytes!("../imgs/cat-left.png"),
-    );
-    let img_right = image_texture(
-        conf.imgs.as_ref().and_then(|i| i.right.clone()),
-        include_bytes!("../imgs/cat-right.png"),
-    );
-
-    let image = Image::from_paintable(Some(&img_rest));
-    image.set_pixel_size(48);
-
-    container.append(&image);
-    window.set_child(Some(&container));
-
-    let provider = gtk4::CssProvider::new();
-    provider.load_from_data(
-        "
-        window { background-color: transparent; }
-        .bongo-container {
-            background-color: rgba(30, 30, 46, 0.85);
-            border: 2px solid #b4befe;
-            border-radius: 12px;
-            padding: 8px;
-        }
-    ",
-    );
-
-    if let Some(display) = gdk::Display::default() {
-        gtk4::style_context_add_provider_for_display(
-            &display,
-            &provider,
-            gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
-        );
-    }
-
-    window.present();
-
-    let current_state = Arc::new(AtomicU8::new(STATE_REST));
-
-    let image_clone = image.clone();
-    let state_ui = current_state.clone();
-    let mut last_rendered_state = STATE_REST;
-
-    glib::timeout_add_local(std::time::Duration::from_millis(16), move || {
-        let state = state_ui.load(Ordering::Relaxed);
-        if state != last_rendered_state {
-            match state {
-                STATE_LEFT => image_clone.set_paintable(Some(&img_left)),
-                STATE_RIGHT => image_clone.set_paintable(Some(&img_right)),
-                _ => image_clone.set_paintable(Some(&img_rest)),
-            }
-            last_rendered_state = state;
-        }
-        glib::ControlFlow::Continue
-    });
-
-    let state_input = current_state.clone();
-
-    let target_device_name = conf
-        .input
-        .as_ref()
-        .and_then(|i| i.device.clone())
-        .unwrap_or_else(|| "AT Translated Set 2 keyboard".to_string());
-
-    platform::start_input(state_input, target_device_name);
+    #[cfg(target_os = "macos")]
+    ExitCode::from(u8::from(macos::run(config)))
 }
