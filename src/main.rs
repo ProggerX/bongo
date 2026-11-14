@@ -3,7 +3,6 @@ use gtk4::prelude::*;
 use gtk4::{Application, ApplicationWindow, Box, Image, Orientation};
 use serde::Deserialize;
 use std::io::Read;
-use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -65,18 +64,17 @@ fn expand_path(path_option: Option<String>) -> Option<String> {
     Some(path)
 }
 
-fn image_path(configured_path: Option<String>, fallback_name: &str) -> String {
+fn image_texture(configured_path: Option<String>, bundled: &'static [u8]) -> gdk::Texture {
     if let Some(path) = expand_path(configured_path) {
-        if Path::new(&path).exists() {
-            return path;
+        match gtk4::gdk_pixbuf::Pixbuf::from_file(&path) {
+            Ok(pixbuf) => return gdk::Texture::for_pixbuf(&pixbuf),
+            Err(error) => eprintln!("[WARN] Cannot load image {path}: {error}"),
         }
-        eprintln!("[WARN] Image not found: {path}");
     }
 
-    let bundled_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("imgs")
-        .join(fallback_name);
-    bundled_path.to_string_lossy().into_owned()
+    let pixbuf = gtk4::gdk_pixbuf::Pixbuf::from_read(std::io::Cursor::new(bundled))
+        .expect("Bundled cat image must be valid");
+    gdk::Texture::for_pixbuf(&pixbuf)
 }
 
 pub fn main() -> glib::ExitCode {
@@ -138,20 +136,20 @@ fn build_ui(app: &Application, conf: Config) {
         .css_name("bongo-container")
         .build();
 
-    let img_rest_path = image_path(
+    let img_rest = image_texture(
         conf.imgs.as_ref().and_then(|i| i.rest.clone()),
-        "cat-rest.png",
+        include_bytes!("../imgs/cat-rest.png"),
     );
-    let img_left_path = image_path(
+    let img_left = image_texture(
         conf.imgs.as_ref().and_then(|i| i.left.clone()),
-        "cat-left.png",
+        include_bytes!("../imgs/cat-left.png"),
     );
-    let img_right_path = image_path(
+    let img_right = image_texture(
         conf.imgs.as_ref().and_then(|i| i.right.clone()),
-        "cat-right.png",
+        include_bytes!("../imgs/cat-right.png"),
     );
 
-    let image = Image::from_file(&img_rest_path);
+    let image = Image::from_paintable(Some(&img_rest));
     image.set_pixel_size(48);
 
     container.append(&image);
@@ -186,17 +184,13 @@ fn build_ui(app: &Application, conf: Config) {
     let state_ui = current_state.clone();
     let mut last_rendered_state = STATE_REST;
 
-    let path_left = img_left_path.clone();
-    let path_right = img_right_path.clone();
-    let path_rest = img_rest_path.clone();
-
     glib::timeout_add_local(std::time::Duration::from_millis(16), move || {
         let state = state_ui.load(Ordering::Relaxed);
         if state != last_rendered_state {
             match state {
-                STATE_LEFT => image_clone.set_from_file(Some(Path::new(&path_left))),
-                STATE_RIGHT => image_clone.set_from_file(Some(Path::new(&path_right))),
-                _ => image_clone.set_from_file(Some(Path::new(&path_rest))),
+                STATE_LEFT => image_clone.set_paintable(Some(&img_left)),
+                STATE_RIGHT => image_clone.set_paintable(Some(&img_right)),
+                _ => image_clone.set_paintable(Some(&img_rest)),
             }
             last_rendered_state = state;
         }

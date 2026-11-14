@@ -1,0 +1,107 @@
+name: CI and release
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  format:
+    name: Formatting
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --component rustfmt
+      - run: cargo +stable fmt --all -- --check
+
+  build:
+    name: Build (${{ matrix.platform }})
+    needs: format
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-musl-x86_64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - platform: macos-x86_64
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - platform: macos-arm64
+            runner: macos-15
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    env:
+      TARGET: ${{ matrix.target }}
+      PLATFORM: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Build Linux musl
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            --workdir /workspace \
+            --env TARGET \
+            --env CARGO_TERM_COLOR \
+            --env RUSTFLAGS='-C target-feature=-crt-static' \
+            rust:alpine sh -eu -c '
+              apk add --no-cache build-base pkgconf gtk4.0-dev gtk4-layer-shell-dev
+              cargo build --locked --release --target "$TARGET"
+            '
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: |
+          brew install gtk4 pkgconf
+          echo "PKG_CONFIG_PATH=$(brew --prefix)/lib/pkgconfig:$(brew --prefix)/share/pkgconfig" >> "$GITHUB_ENV"
+          rustup toolchain install stable --profile minimal --target "$TARGET"
+      - name: Build macOS
+        if: runner.os == 'macOS'
+        run: cargo +stable build --locked --release --target "$TARGET"
+      - name: Package binary
+        run: |
+          mkdir -p "dist/bongo-$PLATFORM"
+          cp "target/$TARGET/release/bongo" README.md "dist/bongo-$PLATFORM/"
+          tar -czf "dist/bongo-$PLATFORM.tar.gz" -C dist "bongo-$PLATFORM"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bongo-${{ matrix.platform }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Upload release assets
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: bongo-*
+          path: dist
+          merge-multiple: true
+      - name: Attach binaries and checksums to the published release
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          sha256sum ./*.tar.gz > SHA256SUMS
+          gh release upload "$RELEASE_TAG" ./*.tar.gz SHA256SUMS --clobber
